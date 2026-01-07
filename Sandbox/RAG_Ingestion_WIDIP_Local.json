@@ -1,0 +1,1143 @@
+{
+  "name": "RAG Ingestion WIDIP Local",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "8207c18e-6683-414a-bf78-9337b344b14e",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1792,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "widip/rag/ingest",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "fabab2fb-3564-4e65-bfa2-32e54c85259e",
+      "name": "Webhook Ingest",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1792,
+        672
+      ],
+      "webhookId": "widip-rag-ingest"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 4 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "e1af6592-40c8-4b24-b1c9-937c15da51d5",
+      "name": "Weekly Sync (Dimanche 4h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1792,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Configuration WIDIP Local RAG\nconst input = $input.first();\nlet config = {\n  mode: 'incremental',\n  clearFirst: false,\n  sourcePath: '/home/node/.n8n-files/widip-docs',\n  triggerType: 'manual',\n  startedAt: new Date().toISOString(),\n  supportedExtensions: ['.md', '.txt', '.pdf', '.docx', '.doc', '.xlsx', '.xls', '.csv', '.json', '.html', '.htm', '.py', '.ts', '.js'],\n  customCategory: null,\n  conversationId: null,\n  userId: null\n};\n\n// Detecter le type de trigger\nif (input.json.headers) {\n  config.triggerType = 'webhook';\n  const body = input.json.body || {};\n  config.mode = body.mode || 'incremental';\n  config.clearFirst = body.clear === true;\n  if (body.path) config.sourcePath = body.path;\n  if (body.category) config.customCategory = body.category;\n  if (body.conversation_id) config.conversationId = body.conversation_id;\n  if (body.user_id) config.userId = body.user_id;\n} else if (input.json.timestamp) {\n  config.triggerType = 'cron';\n  config.mode = 'incremental';\n} else {\n  config.triggerType = 'manual';\n  config.mode = 'full';\n  config.clearFirst = true;\n}\n\nreturn [{ json: config }];"
+      },
+      "id": "bdb9f858-1140-45c6-884e-65550d3efeb6",
+      "name": "Detect Mode & Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1568,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-clear",
+              "leftValue": "={{ $json.clearFirst }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0842cfe2-dde5-473d-b3a3-de6d641f31ca",
+      "name": "Clear First?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1344,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "TRUNCATE TABLE n8n_vectors;",
+        "options": {}
+      },
+      "id": "f19dcd5f-110e-4ec0-81ef-4e30d1bf5e85",
+      "name": "Clear Vectors Table",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -1120,
+        512
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YWxutpB4WjWWcqfy",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Detect Mode & Config').first().json;\nreturn [{ json: config }];"
+      },
+      "id": "588d3ddf-61b2-4eb3-8312-9f75da9b5022",
+      "name": "Pass Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -896,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Scanner le dossier WIDIP et detecter les projets\nconst fs = require('fs');\nconst path = require('path');\nconst crypto = require('crypto');\n\nconst config = $input.first().json;\nconst basePath = config.sourcePath;\nconst supportedExtensions = config.supportedExtensions;\nconst customCategory = config.customCategory;\nconst conversationId = config.conversationId;\nconst userId = config.userId;\n\nfunction getFileHash(filePath) {\n  try {\n    const content = fs.readFileSync(filePath);\n    return crypto.createHash('md5').update(content).digest('hex');\n  } catch (err) {\n    return null;\n  }\n}\n\n// Detection des categories basee sur l'arborescence WIDIP\nfunction getCategory(filePath) {\n  if (customCategory) return customCategory;\n  const lowerPath = filePath.toLowerCase();\n  \n  // Detection par projet WIDIP\n  if (lowerPath.includes('/00_global/')) return '00_GLOBAL';\n  if (lowerPath.includes('/01_wibot/')) return '01_WIBOT';\n  if (lowerPath.includes('/02_mcp_server/')) return '02_MCP_SERVER';\n  if (lowerPath.includes('/03_safeguard/')) return '03_SAFEGUARD';\n  if (lowerPath.includes('/04_workflow_proactif')) return '04_PROACTIF_OBSERVIUM';\n  if (lowerPath.includes('/05_workflow_assist')) return '05_ASSIST_TICKET';\n  if (lowerPath.includes('/06_systeme_rag/')) return '06_SYSTEME_RAG';\n  if (lowerPath.includes('/07_projet_lorraine/')) return '07_PROJET_LORRAINE';\n  if (lowerPath.includes('/08_projet_liliana/')) return '08_PROJET_LILIANA';\n  if (lowerPath.includes('/09_projet_maxime/')) return '09_PROJET_MAXIME';\n  if (lowerPath.includes('/sandbox/')) return 'SANDBOX';\n  \n  // Detection par type de fichier\n  if (lowerPath.includes('/documentation/')) return 'documentation';\n  if (lowerPath.includes('/workflows/')) return 'workflow';\n  if (lowerPath.includes('/src/')) return 'code';\n  \n  return 'general';\n}\n\n// Dossiers a exclure\nconst excludeDirs = ['node_modules', '_archive', '.git', '__pycache__', 'dist', 'build'];\n\nfunction scanDirectory(dirPath, results = []) {\n  try {\n    if (!fs.existsSync(dirPath)) {\n      console.log('Directory does not exist:', dirPath);\n      return results;\n    }\n    \n    const items = fs.readdirSync(dirPath);\n    \n    for (const item of items) {\n      if (item.startsWith('.')) continue;\n      if (excludeDirs.includes(item.toLowerCase())) continue;\n      \n      const fullPath = path.join(dirPath, item);\n      const stat = fs.statSync(fullPath);\n      \n      if (stat.isDirectory()) {\n        scanDirectory(fullPath, results);\n      } else if (stat.isFile()) {\n        const ext = path.extname(item).toLowerCase();\n        if (supportedExtensions.includes(ext)) {\n          const fileData = {\n            path: fullPath,\n            filename: item,\n            extension: ext,\n            size: stat.size,\n            modified: stat.mtime.toISOString(),\n            hash: getFileHash(fullPath),\n            category: getCategory(fullPath),\n            relativePath: fullPath.replace(basePath, '')\n          };\n          if (conversationId) fileData.conversation_id = conversationId;\n          if (userId) fileData.user_id = userId;\n          results.push(fileData);\n        }\n      }\n    }\n  } catch (err) {\n    console.error('Error scanning:', dirPath, err.message);\n  }\n  return results;\n}\n\nconst files = scanDirectory(basePath);\n\nif (files.length === 0) {\n  return [{\n    json: {\n      error: true,\n      message: 'Aucun fichier trouve dans ' + basePath,\n      scannedPath: basePath\n    }\n  }];\n}\n\nreturn files.map(f => ({ json: f }));"
+      },
+      "id": "95b03d15-3666-4596-a13d-da895ee6ddb6",
+      "name": "Scan Directory",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -672,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ad341901-8f19-47f4-aa43-0257c7c4fda2",
+      "name": "Files Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.extension }}",
+                    "rightValue": ".pdf",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "pdf"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.extension }}",
+                    "rightValue": ".xlsx",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "leftValue": "={{ $json.extension }}",
+                    "rightValue": ".xls",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "excel"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.extension }}",
+                    "rightValue": ".docx",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "leftValue": "={{ $json.extension }}",
+                    "rightValue": ".doc",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "word"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.extension }}",
+                    "rightValue": ".csv",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "csv"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.extension }}",
+                    "rightValue": ".json",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "json"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "7dd3b40c-7b3c-4e7b-bede-76cd4e579652",
+      "name": "Switch by Extension",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -224,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraction de texte pour fichiers simples (MD, TXT, HTML, PY, TS, JS)\nconst fs = require('fs');\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const filePath = item.json.path;\n  try {\n    let content = fs.readFileSync(filePath, 'utf-8');\n    \n    // Nettoyer le contenu HTML si necessaire\n    if (item.json.extension === '.html' || item.json.extension === '.htm') {\n      content = content\n        .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n        .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n        .replace(/<[^>]+>/g, ' ')\n        .replace(/\\s+/g, ' ')\n        .trim();\n    }\n    \n    // Ajouter contexte pour fichiers code\n    if (['.py', '.ts', '.js'].includes(item.json.extension)) {\n      content = `[Code ${item.json.extension.toUpperCase()}: ${item.json.filename}]\\n\\n${content}`;\n    }\n    \n    results.push({\n      json: {\n        ...item.json,\n        content: content,\n        contentLength: content.length,\n        extractedAt: new Date().toISOString()\n      }\n    });\n  } catch (err) {\n    results.push({\n      json: {\n        ...item.json,\n        error: true,\n        errorMessage: err.message\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "id": "2f97aee9-4ca8-4e2d-8a94-511081347e38",
+      "name": "Extract Text (MD/TXT/HTML/Code)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.path }}",
+        "options": {}
+      },
+      "id": "e81e0f3f-b3a4-4acf-ba62-c007ae1235dc",
+      "name": "Read PDF File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "id": "0bca1336-751b-4172-acf4-7d6dfd82f832",
+      "name": "Extract PDF Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst scanData = $('Switch by Extension').all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const originalData = scanData[i]?.json || {};\n  \n  let content = '';\n  if (item.json.data) {\n    content = item.json.data;\n  } else if (item.json.text) {\n    content = item.json.text;\n  } else if (typeof item.json === 'string') {\n    content = item.json;\n  }\n  \n  if (!content || content.length < 10) {\n    content = `[PDF: ${originalData.filename}] Document PDF - Extraction limitee. Taille: ${originalData.size} bytes.`;\n  }\n  \n  results.push({\n    json: {\n      ...originalData,\n      content: content.substring(0, 50000),\n      contentLength: content.length,\n      extractionMethod: 'n8n-native-pdf',\n      extractedAt: new Date().toISOString()\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "4fed8cb9-c0e9-48e4-9085-020fd90a2a31",
+      "name": "Prepare PDF Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.path }}",
+        "options": {}
+      },
+      "id": "ece28b00-eccd-4d58-8a69-e638241de8ac",
+      "name": "Read Excel File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "fileFormat": "autoDetect",
+        "options": {}
+      },
+      "id": "ee460f58-f4a1-4a11-ba32-c0fe64802f44",
+      "name": "Parse Excel",
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "typeVersion": 2,
+      "position": [
+        224,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst scanData = $('Switch by Extension').all();\n\nconst fileGroups = {};\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const originalData = scanData[i % scanData.length]?.json || {};\n  const filename = originalData.filename || 'unknown';\n  \n  if (!fileGroups[filename]) {\n    fileGroups[filename] = {\n      originalData,\n      rows: []\n    };\n  }\n  fileGroups[filename].rows.push(item.json);\n}\n\nconst results = [];\nfor (const [filename, group] of Object.entries(fileGroups)) {\n  let content = `[Excel: ${filename}]\\n\\n`;\n  \n  if (group.rows.length > 0) {\n    const columns = Object.keys(group.rows[0]);\n    content += `Colonnes: ${columns.join(', ')}\\n`;\n    content += `Nombre de lignes: ${group.rows.length}\\n\\n`;\n    \n    for (const row of group.rows.slice(0, 500)) {\n      const rowText = columns.map(col => `${col}: ${row[col] || ''}`).join(' | ');\n      content += rowText + '\\n';\n    }\n    \n    if (group.rows.length > 500) {\n      content += `\\n... et ${group.rows.length - 500} lignes supplementaires`;\n    }\n  }\n  \n  results.push({\n    json: {\n      ...group.originalData,\n      content: content.substring(0, 50000),\n      contentLength: content.length,\n      extractionMethod: 'n8n-native-excel',\n      rowCount: group.rows.length,\n      extractedAt: new Date().toISOString()\n    }\n  });\n}\n\nreturn results.length > 0 ? results : [{ json: { error: true, message: 'No Excel data' }}];"
+      },
+      "id": "96c5e0d7-50a2-4ba8-995a-8d67d9e02d6b",
+      "name": "Prepare Excel Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.path }}",
+        "options": {}
+      },
+      "id": "adb4f13f-19b7-4c0b-a924-c9a4297b6b3d",
+      "name": "Read Word File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        0,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "docx"
+      },
+      "id": "6c4db5ee-5246-4197-8975-dca50f4e4e8d",
+      "name": "Extract Word Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        224,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst scanData = $('Switch by Extension').all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const originalData = scanData[i]?.json || {};\n  \n  let content = '';\n  if (item.json.data) {\n    content = item.json.data;\n  } else if (item.json.text) {\n    content = item.json.text;\n  } else if (typeof item.json === 'string') {\n    content = item.json;\n  }\n  \n  if (!content || content.length < 10) {\n    content = `[Word: ${originalData.filename}] Document Word - Extraction limitee. Taille: ${originalData.size} bytes.`;\n  }\n  \n  results.push({\n    json: {\n      ...originalData,\n      content: content.substring(0, 50000),\n      contentLength: content.length,\n      extractionMethod: 'n8n-native-docx',\n      extractedAt: new Date().toISOString()\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "1f49bd27-58f3-49e4-8b59-648648fdc1f9",
+      "name": "Prepare Word Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const filePath = item.json.path;\n  try {\n    const content = fs.readFileSync(filePath, 'utf-8');\n    \n    const lines = content.split('\\n').filter(l => l.trim());\n    const headers = lines[0] ? lines[0].split(/[,;\\t]/) : [];\n    \n    let textContent = `[CSV: ${item.json.filename}]\\n`;\n    textContent += `Colonnes: ${headers.join(', ')}\\n`;\n    textContent += `Nombre de lignes: ${lines.length}\\n\\n`;\n    textContent += `Donnees:\\n${content.substring(0, 30000)}`;\n    \n    results.push({\n      json: {\n        ...item.json,\n        content: textContent,\n        contentLength: textContent.length,\n        extractionMethod: 'csv-text',\n        extractedAt: new Date().toISOString(),\n        rowCount: lines.length,\n        columns: headers\n      }\n    });\n  } catch (err) {\n    results.push({\n      json: {\n        ...item.json,\n        content: `[CSV Error: ${item.json.filename}] ${err.message}`,\n        error: true,\n        errorMessage: err.message\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "id": "059b4b95-a823-418c-8caa-fce9e1dce0e7",
+      "name": "Extract CSV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const filePath = item.json.path;\n  try {\n    const rawContent = fs.readFileSync(filePath, 'utf-8');\n    const jsonData = JSON.parse(rawContent);\n    \n    let textContent = `[JSON: ${item.json.filename}]\\n`;\n    \n    function extractText(obj, prefix = '') {\n      let text = '';\n      if (typeof obj === 'string') {\n        text += obj + ' ';\n      } else if (Array.isArray(obj)) {\n        obj.forEach((item, i) => {\n          text += extractText(item, `${prefix}[${i}]`);\n        });\n      } else if (typeof obj === 'object' && obj !== null) {\n        for (const key of Object.keys(obj)) {\n          text += `${key}: `;\n          text += extractText(obj[key], `${prefix}.${key}`);\n        }\n      } else if (obj !== null && obj !== undefined) {\n        text += String(obj) + ' ';\n      }\n      return text;\n    }\n    \n    textContent += extractText(jsonData);\n    \n    results.push({\n      json: {\n        ...item.json,\n        content: textContent.substring(0, 50000),\n        contentLength: textContent.length,\n        extractionMethod: 'json-flatten',\n        extractedAt: new Date().toISOString()\n      }\n    });\n  } catch (err) {\n    results.push({\n      json: {\n        ...item.json,\n        content: `[JSON Error: ${item.json.filename}] ${err.message}`,\n        error: true,\n        errorMessage: err.message\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "id": "a98ace25-c535-44eb-8a0d-c6868b95ec37",
+      "name": "Extract JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 6
+      },
+      "id": "d685a163-8efe-48ef-9261-abeed06fc5d5",
+      "name": "Merge All Extractions",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        672,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-content",
+              "leftValue": "={{ $json.content }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "no-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1a39017f-e3e3-472e-994a-a03d2e4554b5",
+      "name": "Filter Valid Content",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        896,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nreturn items.map(item => {\n  const doc = {\n    content: item.json.content,\n    source: item.json.filename,\n    category: item.json.category,\n    project: item.json.category,\n    path: item.json.relativePath || item.json.path,\n    extension: item.json.extension,\n    hash: item.json.hash\n  };\n  if (item.json.conversation_id) doc.conversation_id = item.json.conversation_id;\n  if (item.json.user_id) doc.user_id = item.json.user_id;\n  return { json: doc };\n});"
+      },
+      "id": "c30e2b23-bfa7-426a-9577-8073755753ac",
+      "name": "Prepare for Vector Store",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "0af1753d-d5f7-4d81-b9b6-cabad15f413a",
+      "name": "Mistral Embeddings",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsMistralCloud",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        576
+      ],
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "EgRKx3xdYVqLc9DC",
+          "name": "Mistral Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.content }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "source",
+                "value": "={{ $json.source }}"
+              },
+              {
+                "name": "category",
+                "value": "={{ $json.category }}"
+              },
+              {
+                "name": "project",
+                "value": "={{ $json.project }}"
+              },
+              {
+                "name": "path",
+                "value": "={{ $json.path }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "fdc9f3af-d846-41b1-9083-27ce0bb38b46",
+      "name": "Document Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1,
+      "position": [
+        1472,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "chunkOverlap": 200,
+        "options": {}
+      },
+      "id": "25b5008d-c6fa-4c20-a1f8-9198e57cd1b4",
+      "name": "Text Splitter",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        1552,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": "n8n_vectors",
+        "options": {}
+      },
+      "id": "ab95917c-6491-47ee-904a-fc8db1a9855c",
+      "name": "PGVector Store WIDIP",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1,
+      "position": [
+        1376,
+        352
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YWxutpB4WjWWcqfy",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  COUNT(*) as total_vectors,\n  COUNT(DISTINCT metadata->>'source') as unique_sources,\n  COUNT(DISTINCT metadata->>'category') as unique_categories,\n  COUNT(DISTINCT metadata->>'project') as unique_projects\nFROM n8n_vectors;",
+        "options": {}
+      },
+      "id": "c0d1afe9-1c53-4b8e-b565-ab8bfe134f0d",
+      "name": "Get Final Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1840,
+        352
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YWxutpB4WjWWcqfy",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const stats = $input.first().json;\nconst config = $('Detect Mode & Config').first().json;\n\nreturn [{\n  json: {\n    success: true,\n    message: 'Ingestion RAG WIDIP terminee avec succes',\n    stats: {\n      totalVectors: parseInt(stats.total_vectors) || 0,\n      uniqueSources: parseInt(stats.unique_sources) || 0,\n      uniqueCategories: parseInt(stats.unique_categories) || 0,\n      uniqueProjects: parseInt(stats.unique_projects) || 0\n    },\n    config: {\n      mode: config.mode,\n      triggerType: config.triggerType,\n      sourcePath: config.sourcePath,\n      startedAt: config.startedAt,\n      completedAt: new Date().toISOString()\n    }\n  }\n}];"
+      },
+      "id": "d527896f-8e35-4918-8689-960cd249a968",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2064,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "62e4e74d-ce1a-45b0-bb4f-2c6cfb678012",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2288,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"{{ $json.message || 'Aucun fichier trouve' }}\",\n  \"scannedPath\": \"{{ $json.scannedPath || 'unknown' }}\"\n}",
+        "options": {
+          "responseCode": 404,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a2ae5b1e-afa9-4202-8a74-dc291da56b4e",
+      "name": "Respond No Files",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -224,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## RAG Ingestion WIDIP Local\n\n### Projets indexes:\n- 00_GLOBAL (Architecture, Contexte)\n- 01_WIBOT (Chatbot)\n- 02_MCP_SERVER (Tools MCP)\n- 03_SAFEGUARD (Securite)\n- 04_PROACTIF_OBSERVIUM\n- 05_ASSIST_TICKET\n- 06_SYSTEME_RAG\n- 07-09_PROJETS (Lorraine, Liliana, Maxime)\n\n### Table: n8n_vectors\n### Stack autonome (port 5680)",
+        "height": 340,
+        "width": 280
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2080,
+        400
+      ],
+      "id": "note-widip-001",
+      "name": "Documentation"
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Detect Mode & Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Ingest": {
+      "main": [
+        [
+          {
+            "node": "Detect Mode & Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly Sync (Dimanche 4h)": {
+      "main": [
+        [
+          {
+            "node": "Detect Mode & Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Mode & Config": {
+      "main": [
+        [
+          {
+            "node": "Clear First?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clear First?": {
+      "main": [
+        [
+          {
+            "node": "Clear Vectors Table",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pass Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clear Vectors Table": {
+      "main": [
+        [
+          {
+            "node": "Pass Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pass Config": {
+      "main": [
+        [
+          {
+            "node": "Scan Directory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan Directory": {
+      "main": [
+        [
+          {
+            "node": "Files Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Files Found?": {
+      "main": [
+        [
+          {
+            "node": "Switch by Extension",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond No Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch by Extension": {
+      "main": [
+        [
+          {
+            "node": "Read PDF File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read Excel File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read Word File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract CSV",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract JSON",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Text (MD/TXT/HTML/Code)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read PDF File": {
+      "main": [
+        [
+          {
+            "node": "Extract PDF Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF Text": {
+      "main": [
+        [
+          {
+            "node": "Prepare PDF Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare PDF Content": {
+      "main": [
+        [
+          {
+            "node": "Merge All Extractions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Excel File": {
+      "main": [
+        [
+          {
+            "node": "Parse Excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Excel": {
+      "main": [
+        [
+          {
+            "node": "Prepare Excel Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Excel Content": {
+      "main": [
+        [
+          {
+            "node": "Merge All Extractions",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Read Word File": {
+      "main": [
+        [
+          {
+            "node": "Extract Word Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Word Text": {
+      "main": [
+        [
+          {
+            "node": "Prepare Word Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Word Content": {
+      "main": [
+        [
+          {
+            "node": "Merge All Extractions",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Extract CSV": {
+      "main": [
+        [
+          {
+            "node": "Merge All Extractions",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Extract JSON": {
+      "main": [
+        [
+          {
+            "node": "Merge All Extractions",
+            "type": "main",
+            "index": 5
+          }
+        ]
+      ]
+    },
+    "Extract Text (MD/TXT/HTML/Code)": {
+      "main": [
+        [
+          {
+            "node": "Merge All Extractions",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Merge All Extractions": {
+      "main": [
+        [
+          {
+            "node": "Filter Valid Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Valid Content": {
+      "main": [
+        [
+          {
+            "node": "Prepare for Vector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare for Vector Store": {
+      "main": [
+        [
+          {
+            "node": "PGVector Store WIDIP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral Embeddings": {
+      "ai_embedding": [
+        [
+          {
+            "node": "PGVector Store WIDIP",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Document Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "PGVector Store WIDIP",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Document Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PGVector Store WIDIP": {
+      "main": [
+        [
+          {
+            "node": "Get Final Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Final Stats": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "WIDIP-LOCAL"
+    },
+    {
+      "name": "RAG"
+    }
+  ]
+}

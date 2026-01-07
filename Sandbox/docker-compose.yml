@@ -1,0 +1,83 @@
+version: '3.8'
+
+# =============================================================================
+# RAG WIDIP Local - Stack autonome (independante du WIBOT)
+# =============================================================================
+# Ports utilises:
+#   - PostgreSQL: 5434 (pas 5433 qui est WIBOT)
+#   - n8n: 5680 (pas 5679 qui est WIBOT)
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL + pgvector
+  # ---------------------------------------------------------------------------
+  postgres-widip-rag:
+    image: pgvector/pgvector:pg16
+    container_name: widip-rag-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: widip_rag
+      POSTGRES_PASSWORD: widip_rag_local_2025
+      POSTGRES_DB: widip_rag
+    volumes:
+      - widip_rag_postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U widip_rag -d widip_rag"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - widip-rag-network
+
+  # ---------------------------------------------------------------------------
+  # n8n
+  # ---------------------------------------------------------------------------
+  n8n-widip-rag:
+    image: n8nio/n8n:latest
+    container_name: widip-rag-n8n
+    restart: unless-stopped
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5680
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=widip_rag_2025
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres-widip-rag
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=widip_rag
+      - DB_POSTGRESDB_USER=widip_rag
+      - DB_POSTGRESDB_PASSWORD=widip_rag_local_2025
+      - GENERIC_TIMEZONE=Europe/Paris
+      - TZ=Europe/Paris
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=72
+      - NODE_FUNCTION_ALLOW_BUILTIN=fs,path,crypto
+    volumes:
+      - widip_rag_n8n_data:/home/node/.n8n
+      # Monte le dossier WIDIP en lecture seule
+      - C:/Users/maxim/Desktop/WIDIP:/home/node/.n8n-files/widip-docs:ro
+    ports:
+      - "5680:5678"
+    depends_on:
+      postgres-widip-rag:
+        condition: service_healthy
+    networks:
+      - widip-rag-network
+
+volumes:
+  widip_rag_postgres_data:
+    name: widip-rag-postgres-data
+  widip_rag_n8n_data:
+    name: widip-rag-n8n-data
+
+networks:
+  widip-rag-network:
+    name: widip-rag-network
+    driver: bridge

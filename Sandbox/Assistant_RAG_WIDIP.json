@@ -1,0 +1,189 @@
+{
+  "name": "Assistant RAG WIDIP",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "97a90c29-77b3-4adf-8a49-9bed62059587",
+      "name": "When chat message received",
+      "webhookId": "widip-assistant-chat"
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "Tu es un assistant expert sur les projets WIDIP de Maxime.\n\nTu as acces a une base de connaissances (RAG) contenant toute la documentation des projets:\n\n**Projets disponibles:**\n- **00_GLOBAL**: Architecture globale WIDIP, contexte entreprise, infographies\n- **01_WIBOT**: Chatbot IA pour techniciens support (frontend React + backend n8n)\n- **02_MCP_SERVER**: Serveur MCP Python centralise avec 30+ tools (GLPI, AD, Observium, etc.)\n- **03_SAFEGUARD**: Systeme de securite L0-L4 avec validation humaine\n- **04_PROACTIF_OBSERVIUM**: Workflow de surveillance reseau proactive\n- **05_ASSIST_TICKET**: Workflow de resolution automatique de tickets GLPI\n- **06_SYSTEME_RAG**: Base de connaissances vectorielle (PostgreSQL + pgvector)\n- **07_PROJET_LORRAINE**: Automatisation Excel\n- **08_PROJET_LILIANA**: Automatisation comptabilite\n- **09_PROJET_MAXIME**: Taches personnelles et ameliorations\n\n**Instructions:**\n1. Utilise TOUJOURS le tool RAG pour chercher des informations avant de repondre\n2. Cite les sources (nom du fichier) quand tu donnes une information\n3. Si tu ne trouves pas l'info dans le RAG, dis-le clairement\n4. Reponds en francais\n5. Sois precis et concis\n\n**Contexte entreprise:**\nWIDIP est une SCOP specialisee dans le support IT pour le secteur medico-social (600+ etablissements de sante). Conformite ISO 27001 et HDS obligatoire."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        208,
+        0
+      ],
+      "id": "c6d3ce18-ad31-4002-b0b3-f0f6b1149f20",
+      "name": "AI Agent WIDIP"
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "tableName": "n8n_vectors",
+        "topK": 5,
+        "options": {
+          "toolDescription": "Recherche dans la documentation des projets WIDIP. Utilise ce tool pour trouver des informations sur l'architecture, les workflows, le code, les procedures, etc."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.3,
+      "position": [
+        496,
+        160
+      ],
+      "id": "1026741f-40f3-4814-aa8c-8bd85ab2cb21",
+      "name": "RAG WIDIP (PGVector)",
+      "credentials": {
+        "postgres": {
+          "id": "YWxutpB4WjWWcqfy",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsMistralCloud",
+      "typeVersion": 1,
+      "position": [
+        480,
+        336
+      ],
+      "id": "44c52c4d-36ba-4e9d-b4d3-d694751e99eb",
+      "name": "Embeddings Mistral Cloud",
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "EgRKx3xdYVqLc9DC",
+          "name": "Mistral Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableName": "n8n_chat_histories",
+        "contextWindowLength": 15
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.3,
+      "position": [
+        320,
+        208
+      ],
+      "id": "0d022709-a5e2-47fd-bc6c-39d4938a6237",
+      "name": "Postgres Chat Memory WIDIP",
+      "credentials": {
+        "postgres": {
+          "id": "YWxutpB4WjWWcqfy",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatMistralCloud",
+      "typeVersion": 1,
+      "position": [
+        96,
+        192
+      ],
+      "id": "321ae1e2-ef36-4eaa-99ad-21d7d6a1a1ba",
+      "name": "Mistral Cloud Chat Model",
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "EgRKx3xdYVqLc9DC",
+          "name": "Mistral Cloud account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "AI Agent WIDIP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RAG WIDIP (PGVector)": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent WIDIP",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Mistral Cloud": {
+      "ai_embedding": [
+        [
+          {
+            "node": "RAG WIDIP (PGVector)",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Chat Memory WIDIP": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent WIDIP",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral Cloud Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent WIDIP",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "WIDIP-LOCAL"
+    },
+    {
+      "name": "RAG"
+    },
+    {
+      "name": "Assistant"
+    }
+  ]
+}
