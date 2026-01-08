@@ -28,7 +28,7 @@ Actuellement, quand un technicien approuve une action L3 (sensible) via le Safeg
     |
 [Safeguard detecte L3/L4]
     |
-[Notification Teams au technicien]
+[Notification WIBOT au technicien]
     |
 [Technicien approuve]
     |
@@ -104,3 +104,4 @@ CREATE TABLE safeguard_deferred_actions (
 
 - Prevoir une option "Execution immediate" pour les urgences (avec justification obligatoire)
 - Envoyer un rappel 1h avant execution
+
