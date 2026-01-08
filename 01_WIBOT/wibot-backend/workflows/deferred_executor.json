@@ -1,0 +1,198 @@
+{
+  "name": "WIDIP - Deferred Actions Executor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 5 }]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.MCP_SERVER_URL || 'http://host.docker.internal:3001' }}/safeguard/deferred/due",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "fetch-due-actions",
+      "name": "Fetch Due Actions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mcp-auth",
+          "name": "MCP Server Auth"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n\n// Si erreur ou pas d'actions\nif (response.error || !response.actions || response.actions.length === 0) {\n  return [{ json: { hasActions: false, actions: [], count: 0 } }];\n}\n\n// Transformer en liste pour le splitInBatches\nconst actions = response.actions.map(action => ({\n  deferred_id: action.deferred_id,\n  approval_id: action.approval_id,\n  tool_name: action.tool_name,\n  parameters: action.parameters,\n  security_level: action.security_level,\n  context: action.context\n}));\n\nreturn [{ json: { hasActions: true, actions: actions, count: actions.length } }];"
+      },
+      "id": "check-actions",
+      "name": "Check Actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "has-actions", "leftValue": "={{ $json.hasActions }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-actions",
+      "name": "Has Actions?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const actions = $input.first().json.actions;\nreturn actions.map(action => ({ json: action }));"
+      },
+      "id": "split-actions",
+      "name": "Split Actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MCP_SERVER_URL || 'http://host.docker.internal:3001' }}/safeguard/deferred/{{ $json.deferred_id }}/execute",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "execute-action",
+      "name": "Execute Action",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mcp-auth",
+          "name": "MCP Server Auth"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst deferredId = $('Split Actions').first().json.deferred_id;\nconst toolName = $('Split Actions').first().json.tool_name;\nconst context = $('Split Actions').first().json.context || {};\n\nconst success = response.success === true;\nconst timestamp = new Date().toISOString();\n\nreturn [{\n  json: {\n    deferred_id: deferredId,\n    tool_name: toolName,\n    success: success,\n    result: success ? response.result : null,\n    error: success ? null : (response.error || 'Unknown error'),\n    context: context,\n    executed_at: timestamp\n  }\n}];"
+      },
+      "id": "format-result",
+      "name": "Format Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "check-success", "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-success",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1790, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MCP_SERVER_URL || 'http://host.docker.internal:3001' }}/tools/notify_technician",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"channel\": \"teams\",\n  \"title\": \"✅ Action differee executee\",\n  \"message\": \"**{{ $json.tool_name }}** ({{ $json.deferred_id }})\\n\\nExecution reussie.\\n{{ $json.context.client_name ? 'Client: ' + $json.context.client_name : '' }}\\n{{ $json.context.ticket_id ? 'Ticket: #' + $json.context.ticket_id : '' }}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "notify-success",
+      "name": "Notify Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2010, 100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mcp-auth",
+          "name": "MCP Server Auth"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MCP_SERVER_URL || 'http://host.docker.internal:3001' }}/tools/notify_technician",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"channel\": \"teams\",\n  \"title\": \"❌ Echec execution action differee\",\n  \"message\": \"**{{ $json.tool_name }}** ({{ $json.deferred_id }})\\n\\nErreur: {{ $json.error }}\\n{{ $json.context.client_name ? 'Client: ' + $json.context.client_name : '' }}\\n{{ $json.context.ticket_id ? 'Ticket: #' + $json.context.ticket_id : '' }}\\n\\n⚠️ Intervention manuelle requise.\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "notify-failure",
+      "name": "Notify Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2010, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mcp-auth",
+          "name": "MCP Server Auth"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {},
+      "id": "no-op-empty",
+      "name": "No Actions",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1130, 400]
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": { "main": [[{ "node": "Fetch Due Actions", "type": "main", "index": 0 }]] },
+    "Fetch Due Actions": { "main": [[{ "node": "Check Actions", "type": "main", "index": 0 }]] },
+    "Check Actions": { "main": [[{ "node": "Has Actions?", "type": "main", "index": 0 }]] },
+    "Has Actions?": { "main": [[{ "node": "Split Actions", "type": "main", "index": 0 }], [{ "node": "No Actions", "type": "main", "index": 0 }]] },
+    "Split Actions": { "main": [[{ "node": "Execute Action", "type": "main", "index": 0 }]] },
+    "Execute Action": { "main": [[{ "node": "Format Result", "type": "main", "index": 0 }]] },
+    "Format Result": { "main": [[{ "node": "Success?", "type": "main", "index": 0 }]] },
+    "Success?": { "main": [[{ "node": "Notify Success", "type": "main", "index": 0 }], [{ "node": "Notify Failure", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "WIDIP" }, { "name": "Safeguard" }, { "name": "Cron" }, { "name": "Deferred" }],
+  "triggerCount": 1,
+  "pinData": {}
+}

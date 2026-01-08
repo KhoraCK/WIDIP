@@ -1,0 +1,318 @@
+{
+  "name": "WIBOT - Safeguard Deferred",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "wibot/safeguard/deferred",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-get-deferred",
+      "name": "GET Deferred List",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 200],
+      "webhookId": "safeguard-get-deferred"
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "wibot/safeguard/deferred/:id",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-get-deferred-detail",
+      "name": "GET Deferred Detail",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 500],
+      "webhookId": "safeguard-get-deferred-detail"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wibot/safeguard/deferred/:id/cancel",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-cancel-deferred",
+      "name": "POST Cancel Deferred",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 800],
+      "webhookId": "safeguard-cancel-deferred"
+    },
+    {
+      "parameters": {
+        "jsCode": "const authHeader = $input.first().json.headers.authorization || '';\nconst token = authHeader.replace('Bearer ', '');\n\nif (!token) {\n  return [{ json: { valid: false, error: 'No token provided' } }];\n}\n\ntry {\n  const parts = token.split('.');\n  if (parts.length !== 3) {\n    return [{ json: { valid: false, error: 'Invalid token format' } }];\n  }\n  \n  const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());\n  \n  if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {\n    return [{ json: { valid: false, error: 'Token expired' } }];\n  }\n  \n  const level = payload.accreditationLevel || 'N1';\n  const levelNum = parseInt(level.replace('N', ''));\n  if (levelNum < 1) {\n    return [{ json: { valid: false, error: 'Accreditation level too low' } }];\n  }\n  \n  return [{ json: { \n    valid: true, \n    userId: payload.userId,\n    username: payload.username,\n    role: payload.role,\n    accreditationLevel: level\n  } }];\n} catch (e) {\n  return [{ json: { valid: false, error: 'Invalid token: ' + e.message } }];\n}"
+      },
+      "id": "verify-jwt-list",
+      "name": "Verify JWT (List)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const authHeader = $input.first().json.headers.authorization || '';\nconst token = authHeader.replace('Bearer ', '');\n\nif (!token) {\n  return [{ json: { valid: false, error: 'No token provided' } }];\n}\n\ntry {\n  const parts = token.split('.');\n  if (parts.length !== 3) {\n    return [{ json: { valid: false, error: 'Invalid token format' } }];\n  }\n  \n  const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());\n  \n  if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {\n    return [{ json: { valid: false, error: 'Token expired' } }];\n  }\n  \n  const level = payload.accreditationLevel || 'N1';\n  const levelNum = parseInt(level.replace('N', ''));\n  if (levelNum < 1) {\n    return [{ json: { valid: false, error: 'Accreditation level too low' } }];\n  }\n  \n  const params = $('GET Deferred Detail').first().json.params || {};\n  \n  return [{ json: { \n    valid: true, \n    userId: payload.userId,\n    username: payload.username,\n    role: payload.role,\n    accreditationLevel: level,\n    deferredId: params.id\n  } }];\n} catch (e) {\n  return [{ json: { valid: false, error: 'Invalid token: ' + e.message } }];\n}"
+      },
+      "id": "verify-jwt-detail",
+      "name": "Verify JWT (Detail)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const authHeader = $input.first().json.headers.authorization || '';\nconst token = authHeader.replace('Bearer ', '');\nconst body = $('POST Cancel Deferred').first().json.body || {};\n\nif (!token) {\n  return [{ json: { valid: false, error: 'No token provided' } }];\n}\n\ntry {\n  const parts = token.split('.');\n  if (parts.length !== 3) {\n    return [{ json: { valid: false, error: 'Invalid token format' } }];\n  }\n  \n  const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());\n  \n  if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {\n    return [{ json: { valid: false, error: 'Token expired' } }];\n  }\n  \n  const level = payload.accreditationLevel || 'N1';\n  const levelNum = parseInt(level.replace('N', ''));\n  if (levelNum < 1) {\n    return [{ json: { valid: false, error: 'Accreditation level too low' } }];\n  }\n  \n  const params = $('POST Cancel Deferred').first().json.params || {};\n  \n  return [{ json: { \n    valid: true, \n    userId: payload.userId,\n    username: payload.username,\n    role: payload.role,\n    accreditationLevel: level,\n    deferredId: params.id,\n    reason: body.reason || ''\n  } }];\n} catch (e) {\n  return [{ json: { valid: false, error: 'Invalid token: ' + e.message } }];\n}"
+      },
+      "id": "verify-jwt-cancel",
+      "name": "Verify JWT (Cancel)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 800]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "check-valid", "leftValue": "={{ $json.valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid-list",
+      "name": "Valid? (List)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [690, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "check-valid", "leftValue": "={{ $json.valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid-detail",
+      "name": "Valid? (Detail)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [690, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "check-valid", "leftValue": "={{ $json.valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid-cancel",
+      "name": "Valid? (Cancel)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [690, 800]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.MCP_SERVER_URL || 'http://host.docker.internal:3001' }}/safeguard/deferred",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "fetch-mcp-list",
+      "name": "Fetch MCP Deferred List",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mcp-auth",
+          "name": "MCP Server Auth"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.MCP_SERVER_URL || 'http://host.docker.internal:3001' }}/safeguard/deferred/{{ $('Verify JWT (Detail)').first().json.deferredId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "fetch-mcp-detail",
+      "name": "Fetch MCP Deferred Detail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mcp-auth",
+          "name": "MCP Server Auth"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MCP_SERVER_URL || 'http://host.docker.internal:3001' }}/safeguard/deferred/{{ $json.deferredId }}/cancel",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"cancelled_by\": \"{{ $json.username }}\",\n  \"reason\": \"{{ $json.reason }}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "call-mcp-cancel",
+      "name": "Call MCP Cancel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 700],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mcp-auth",
+          "name": "MCP Server Auth"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n\n// Si erreur de connexion au MCP, retourner liste vide avec mode demo\nif (response.error || !response.actions) {\n  return [{\n    json: {\n      success: true,\n      actions: [],\n      count: 0,\n      message: 'MCP Server non disponible - mode demonstration'\n    }\n  }];\n}\n\n// Enrichir les actions avec le temps restant\nconst actions = response.actions.map(action => {\n  const scheduledAt = new Date(action.scheduled_at);\n  const now = new Date();\n  const timeUntil = Math.max(0, Math.floor((scheduledAt - now) / 1000));\n  \n  return {\n    ...action,\n    time_until_execution: timeUntil,\n    can_cancel: action.status === 'pending' && timeUntil > 0\n  };\n});\n\nreturn [{\n  json: {\n    success: true,\n    actions: actions,\n    count: actions.length,\n    stats: response.stats || {}\n  }\n}];"
+      },
+      "id": "format-list",
+      "name": "Format List Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n\n// Si erreur\nif (response.error || !response.deferred_id) {\n  return [{\n    json: {\n      success: false,\n      error: response.error || 'Action differee non trouvee'\n    }\n  }];\n}\n\n// Calculer le temps restant\nconst scheduledAt = new Date(response.scheduled_at);\nconst now = new Date();\nconst timeUntil = Math.max(0, Math.floor((scheduledAt - now) / 1000));\n\nreturn [{\n  json: {\n    success: true,\n    action: {\n      ...response,\n      time_until_execution: timeUntil,\n      can_cancel: response.status === 'pending' && timeUntil > 0\n    }\n  }\n}];"
+      },
+      "id": "format-detail",
+      "name": "Format Detail Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst deferredId = $('Verify JWT (Cancel)').first().json.deferredId;\n\n// Si erreur de connexion au MCP\nif (response.error && !response.success) {\n  return [{\n    json: {\n      success: false,\n      deferred_id: deferredId,\n      error: response.error || 'Erreur lors de l\\'annulation'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: response.success !== false,\n    deferred_id: deferredId,\n    status: response.status || 'cancelled',\n    message: response.message || 'Action annulee avec succes'\n  }\n}];"
+      },
+      "id": "format-cancel",
+      "name": "Format Cancel Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 700]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "respond-list-success",
+      "name": "List Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1350, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "respond-detail-success",
+      "name": "Detail Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1350, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "respond-cancel-success",
+      "name": "Cancel Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1350, 700]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"success\": false, \"error\": \"{{ $json.error || 'Unauthorized' }}\" }",
+        "options": { "responseCode": 401 }
+      },
+      "id": "respond-unauthorized-list",
+      "name": "Unauthorized (List)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [910, 280]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"success\": false, \"error\": \"{{ $json.error || 'Unauthorized' }}\" }",
+        "options": { "responseCode": 401 }
+      },
+      "id": "respond-unauthorized-detail",
+      "name": "Unauthorized (Detail)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [910, 580]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"success\": false, \"error\": \"{{ $json.error || 'Unauthorized' }}\" }",
+        "options": { "responseCode": 401 }
+      },
+      "id": "respond-unauthorized-cancel",
+      "name": "Unauthorized (Cancel)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [910, 880]
+    }
+  ],
+  "connections": {
+    "GET Deferred List": { "main": [[{ "node": "Verify JWT (List)", "type": "main", "index": 0 }]] },
+    "GET Deferred Detail": { "main": [[{ "node": "Verify JWT (Detail)", "type": "main", "index": 0 }]] },
+    "POST Cancel Deferred": { "main": [[{ "node": "Verify JWT (Cancel)", "type": "main", "index": 0 }]] },
+    "Verify JWT (List)": { "main": [[{ "node": "Valid? (List)", "type": "main", "index": 0 }]] },
+    "Verify JWT (Detail)": { "main": [[{ "node": "Valid? (Detail)", "type": "main", "index": 0 }]] },
+    "Verify JWT (Cancel)": { "main": [[{ "node": "Valid? (Cancel)", "type": "main", "index": 0 }]] },
+    "Valid? (List)": { "main": [[{ "node": "Fetch MCP Deferred List", "type": "main", "index": 0 }], [{ "node": "Unauthorized (List)", "type": "main", "index": 0 }]] },
+    "Valid? (Detail)": { "main": [[{ "node": "Fetch MCP Deferred Detail", "type": "main", "index": 0 }], [{ "node": "Unauthorized (Detail)", "type": "main", "index": 0 }]] },
+    "Valid? (Cancel)": { "main": [[{ "node": "Call MCP Cancel", "type": "main", "index": 0 }], [{ "node": "Unauthorized (Cancel)", "type": "main", "index": 0 }]] },
+    "Fetch MCP Deferred List": { "main": [[{ "node": "Format List Response", "type": "main", "index": 0 }]] },
+    "Fetch MCP Deferred Detail": { "main": [[{ "node": "Format Detail Response", "type": "main", "index": 0 }]] },
+    "Call MCP Cancel": { "main": [[{ "node": "Format Cancel Response", "type": "main", "index": 0 }]] },
+    "Format List Response": { "main": [[{ "node": "List Success", "type": "main", "index": 0 }]] },
+    "Format Detail Response": { "main": [[{ "node": "Detail Success", "type": "main", "index": 0 }]] },
+    "Format Cancel Response": { "main": [[{ "node": "Cancel Success", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "WIBOT" }, { "name": "Safeguard" }, { "name": "Deferred" }],
+  "triggerCount": 3,
+  "pinData": {}
+}

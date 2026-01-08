@@ -1,6 +1,8 @@
 # TACHE 01 - Execution Differee 24h pour Actions Sensibles
 
-> **Statut** : A faire
+> **Statut** : IMPLEMENTEE ✅
+> **Date implementation** : 2026-01-08
+> **Commit** : `876d966`
 > **Priorite** : Haute
 > **Projets concernes** : 03_SAFEGUARD, 04_WORKFLOW_PROACTIF_OBSERVIUM, 05_WORKFLOW_ASSIST_TICKET
 
@@ -92,11 +94,48 @@ CREATE TABLE safeguard_deferred_actions (
 
 ## Criteres de Validation
 
-- [ ] Les actions L3 sont mises en file d'attente apres approbation
-- [ ] Le technicien peut annuler pendant le delai
-- [ ] L'execution automatique fonctionne apres 24h
-- [ ] Les logs tracent approbation + execution separement
-- [ ] Le Dashboard affiche les actions en attente
+- [x] Les actions L3 sont mises en file d'attente apres approbation
+- [x] Le technicien peut annuler pendant le delai
+- [x] L'execution automatique fonctionne apres 24h (workflow cron)
+- [x] Les logs tracent approbation + execution separement
+- [x] Le Dashboard affiche les actions en attente (onglet "Programmees")
+
+---
+
+## Implementation Realisee
+
+### Backend MCP (Python/FastAPI)
+
+| Fichier | Description |
+|---------|-------------|
+| `migrations/002_deferred_actions.sql` | Schema PostgreSQL |
+| `safeguard_queue.py` | Classe `DeferredActionManager` |
+| `server.py` | 6 endpoints `/safeguard/deferred/*` |
+
+### Backend n8n (Workflows)
+
+| Fichier | Description |
+|---------|-------------|
+| `safeguard_deferred.json` | GET list, GET detail, POST cancel |
+| `deferred_executor.json` | Cron 5min pour executer actions dues |
+
+### Frontend WIBOT (React/TypeScript)
+
+| Fichier | Description |
+|---------|-------------|
+| `types.ts` | `DeferredAction`, `DeferredStatus` |
+| `services/safeguard.ts` | API functions deferred |
+| `safeguardStore.ts` | State & actions deferred |
+| `DeferredActionCard.tsx` | Carte action programmee |
+| `DeferredActionList.tsx` | Sidebar actions programmees |
+| `DeferredActionDetail.tsx` | Detail + bouton annuler |
+| `TabSelector.tsx` | Onglets En attente / Programmees |
+| `Safeguard.tsx` | Integration + mock data |
+
+### Mock Data
+
+- **DEF-2026-001** : Reset MDP `mmartin` (18h restantes)
+- **DEF-2026-002** : Desactivation `ancien.employe` (2h restantes)
 
 ---
 
