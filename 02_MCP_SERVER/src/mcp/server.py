@@ -30,7 +30,13 @@ from ..config import (
 from ..clients.memory import memory_client
 from .protocol import ExecutionContext, MCPErrorCode, MCPRequest, MCPResponse
 from .registry import tool_registry
-from .safeguard_queue import safeguard_queue, ApprovalStatus
+from .safeguard_queue import (
+    safeguard_queue,
+    deferred_manager,
+    ApprovalStatus,
+    DeferredStatus,
+    DEFERRED_DELAY_HOURS,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -246,6 +252,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Initialiser la queue SAFEGUARD (crée la table si nécessaire)
         await safeguard_queue.initialize()
         logger.info("safeguard_queue_initialized")
+
+        # Initialiser le gestionnaire d'actions differees
+        await deferred_manager.initialize()
+        logger.info("deferred_manager_initialized")
     except Exception as e:
         logger.error("database_init_failed", error=str(e))
         # On continue quand même, les pools seront créés à la demande
@@ -267,6 +277,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("mcp_server_stopping")
     await memory_client.close()
     await safeguard_queue.close()
+    await deferred_manager.close()
     logger.info("database_pools_closed")
 
 
@@ -940,3 +951,200 @@ def _register_routes(app: FastAPI) -> None:
                 },
                 status_code=500,
             )
+
+    # -------------------------------------------------------------------------
+    # Endpoints SAFEGUARD - Actions Differees (24-48h)
+    # -------------------------------------------------------------------------
+
+    @app.get("/safeguard/deferred")
+    async def list_deferred_actions(
+        _api_key: Optional[str] = Depends(verify_api_key),
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Liste les actions differees en attente d'execution."""
+        actions = await deferred_manager.get_pending_actions(limit=limit)
+        stats = await deferred_manager.get_stats()
+        return {
+            "count": len(actions),
+            "stats": stats,
+            "actions": actions,
+        }
+
+    @app.get("/safeguard/deferred/{deferred_id}")
+    async def get_deferred_action_detail(
+        deferred_id: str,
+        _api_key: Optional[str] = Depends(verify_api_key),
+    ) -> JSONResponse:
+        """Recupere le detail d'une action differee."""
+        detail = await deferred_manager.get_action_detail(deferred_id)
+
+        if not detail:
+            return JSONResponse(
+                content={"error": "Action differee non trouvee"},
+                status_code=404,
+            )
+
+        return JSONResponse(content=detail)
+
+    @app.post("/safeguard/deferred/{deferred_id}/cancel")
+    async def cancel_deferred_action(
+        deferred_id: str,
+        request: Request,
+        _api_key: Optional[str] = Depends(verify_api_key),
+    ) -> JSONResponse:
+        """
+        Annule une action differee avant son execution.
+
+        Body:
+        {
+            "cancelled_by": "tech.dupont",
+            "reason": "Client a change d'avis" (optional)
+        }
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        cancelled_by = body.get("cancelled_by", "unknown")
+        reason = body.get("reason")
+
+        result = await deferred_manager.cancel_action(
+            deferred_id=deferred_id,
+            cancelled_by=cancelled_by,
+            reason=reason,
+        )
+
+        status_code = 200 if result.get("success") else 400
+        return JSONResponse(content=result, status_code=status_code)
+
+    @app.get("/safeguard/deferred/due")
+    async def get_due_deferred_actions(
+        _api_key: Optional[str] = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """
+        Liste les actions differees pretes a etre executees.
+        Utilise par le cron pour recuperer les actions a executer.
+        """
+        actions = await deferred_manager.get_due_actions()
+        return {
+            "count": len(actions),
+            "actions": actions,
+        }
+
+    @app.post("/safeguard/deferred/{deferred_id}/execute")
+    async def execute_deferred_action(
+        deferred_id: str,
+        request: Request,
+        _api_key: Optional[str] = Depends(verify_api_key),
+    ) -> JSONResponse:
+        """
+        Execute une action differee (appele par le cron).
+
+        Recupere les arguments complets et execute le tool.
+        """
+        # Recuperer les details de l'action
+        detail = await deferred_manager.get_action_detail(deferred_id)
+
+        if not detail:
+            return JSONResponse(
+                content={"error": "Action differee non trouvee"},
+                status_code=404,
+            )
+
+        if detail["status"] != DeferredStatus.PENDING.value:
+            return JSONResponse(
+                content={
+                    "error": f"Action ne peut pas etre executee (status: {detail['status']})"
+                },
+                status_code=400,
+            )
+
+        # Recuperer les arguments complets (avec secrets)
+        approval_id = detail["approval_id"]
+        full_arguments = await safeguard_queue.get_full_arguments(approval_id)
+
+        if not full_arguments:
+            full_arguments = detail["parameters"]
+
+        tool_name = detail["tool_name"]
+
+        # Executer le tool
+        context = ExecutionContext(
+            request_id=f"deferred-{deferred_id}",
+            tool_name=tool_name,
+            caller=request.client.host if request.client else None,
+        )
+
+        try:
+            response = await tool_registry.execute(
+                tool_name=tool_name,
+                arguments=full_arguments,
+                context=context,
+            )
+
+            if response.error:
+                await deferred_manager.mark_executed(
+                    deferred_id=deferred_id,
+                    error=str(response.error),
+                )
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "deferred_id": deferred_id,
+                        "error": response.error.model_dump(),
+                    },
+                    status_code=500,
+                )
+
+            # Marquer comme execute
+            await deferred_manager.mark_executed(
+                deferred_id=deferred_id,
+                result=response.result,
+            )
+
+            # Nettoyer les secrets de Redis
+            await safeguard_queue.cleanup_secrets(approval_id)
+
+            logger.info(
+                "deferred_action_executed_successfully",
+                deferred_id=deferred_id,
+                tool_name=tool_name,
+            )
+
+            return JSONResponse(content={
+                "success": True,
+                "deferred_id": deferred_id,
+                "tool_name": tool_name,
+                "result": response.result,
+            })
+
+        except Exception as e:
+            await deferred_manager.mark_executed(
+                deferred_id=deferred_id,
+                error=str(e),
+            )
+            logger.error(
+                "deferred_action_execution_failed",
+                deferred_id=deferred_id,
+                error=str(e),
+            )
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "deferred_id": deferred_id,
+                    "error": str(e),
+                },
+                status_code=500,
+            )
+
+    @app.get("/safeguard/deferred/stats")
+    async def get_deferred_stats(
+        _api_key: Optional[str] = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Retourne les statistiques des actions differees."""
+        stats = await deferred_manager.get_stats()
+        return {
+            "delay_config": DEFERRED_DELAY_HOURS,
+            "stats": stats,
+        }
