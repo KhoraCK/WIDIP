@@ -1,27 +1,38 @@
 import { create } from 'zustand';
-import type { SafeguardRequest } from '../components/safeguard/types';
+import type { SafeguardRequest, DeferredAction } from '../components/safeguard/types';
 import {
   getSafeguardRequests,
   approveSafeguardRequest,
   rejectSafeguardRequest,
+  getDeferredActions,
+  cancelDeferredAction,
 } from '../services/safeguard';
 
 interface SafeguardState {
-  // Data
+  // Data - Demandes en attente
   requests: SafeguardRequest[];
   selectedRequest: SafeguardRequest | null;
   pendingCount: number;
 
+  // Data - Actions differees
+  deferredActions: DeferredAction[];
+  selectedDeferred: DeferredAction | null;
+  deferredCount: number;
+
+  // UI State
+  activeTab: 'pending' | 'deferred';
+
   // Loading states
   isLoading: boolean;
   isActionLoading: boolean;
+  isDeferredLoading: boolean;
   error: string | null;
 
   // Polling
   pollingInterval: number;
   isPollingEnabled: boolean;
 
-  // Actions
+  // Actions - Demandes
   setRequests: (requests: SafeguardRequest[]) => void;
   setSelectedRequest: (request: SafeguardRequest | null) => void;
   setLoading: (loading: boolean) => void;
@@ -30,19 +41,39 @@ interface SafeguardState {
   setPollingInterval: (interval: number) => void;
   setPollingEnabled: (enabled: boolean) => void;
 
-  // Async actions
+  // Actions - Differees
+  setDeferredActions: (actions: DeferredAction[]) => void;
+  setSelectedDeferred: (action: DeferredAction | null) => void;
+  setActiveTab: (tab: 'pending' | 'deferred') => void;
+
+  // Async actions - Demandes
   fetchRequests: (showLoading?: boolean) => Promise<void>;
   approveRequest: (approvalId: string, comment?: string) => Promise<boolean>;
   rejectRequest: (approvalId: string, comment?: string) => Promise<boolean>;
+
+  // Async actions - Differees
+  fetchDeferredActions: (showLoading?: boolean) => Promise<void>;
+  cancelDeferred: (deferredId: string, cancelledBy: string, reason?: string) => Promise<boolean>;
 }
 
 export const useSafeguardStore = create<SafeguardState>((set, get) => ({
-  // Initial state
+  // Initial state - Demandes
   requests: [],
   selectedRequest: null,
   pendingCount: 0,
+
+  // Initial state - Actions differees
+  deferredActions: [],
+  selectedDeferred: null,
+  deferredCount: 0,
+
+  // UI State
+  activeTab: 'pending',
+
+  // Loading states
   isLoading: false,
   isActionLoading: false,
+  isDeferredLoading: false,
   error: null,
   pollingInterval: 30000, // 30 secondes par défaut
   isPollingEnabled: true,
@@ -64,6 +95,16 @@ export const useSafeguardStore = create<SafeguardState>((set, get) => ({
   setPollingInterval: (interval) => set({ pollingInterval: interval }),
 
   setPollingEnabled: (enabled) => set({ isPollingEnabled: enabled }),
+
+  // Setters - Actions differees
+  setDeferredActions: (actions) => {
+    const deferredCount = actions.filter(a => a.status === 'pending').length;
+    set({ deferredActions: actions, deferredCount });
+  },
+
+  setSelectedDeferred: (action) => set({ selectedDeferred: action }),
+
+  setActiveTab: (tab) => set({ activeTab: tab }),
 
   // Async: Fetch requests
   fetchRequests: async (showLoading = true) => {
@@ -180,6 +221,92 @@ export const useSafeguardStore = create<SafeguardState>((set, get) => ({
         isActionLoading: false,
       });
       console.error('Reject error:', err);
+      return false;
+    }
+  },
+
+  // Async: Fetch deferred actions
+  fetchDeferredActions: async (showLoading = true) => {
+    const state = get();
+    if (showLoading) set({ isDeferredLoading: true });
+    set({ error: null });
+
+    try {
+      const response = await getDeferredActions();
+      if (response.actions) {
+        const deferredCount = response.actions.filter(a => a.status === 'pending').length;
+
+        // Mettre à jour l'action sélectionnée si elle existe encore
+        let selectedDeferred = state.selectedDeferred;
+        if (selectedDeferred) {
+          const updated = response.actions.find(
+            a => a.deferred_id === selectedDeferred!.deferred_id
+          );
+          selectedDeferred = updated || null;
+        }
+
+        set({
+          deferredActions: response.actions,
+          deferredCount,
+          selectedDeferred,
+          isDeferredLoading: false,
+        });
+      } else {
+        set({
+          error: 'Erreur lors du chargement des actions differees',
+          isDeferredLoading: false,
+        });
+        throw new Error('API returned no actions');
+      }
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Erreur inconnue';
+      let displayError = 'Erreur lors du chargement des actions differees';
+
+      if (errorMessage.includes('401')) {
+        displayError = 'Acces non autorise';
+      } else if (errorMessage.includes('403')) {
+        displayError = "Niveau d'accreditation insuffisant";
+      }
+
+      set({
+        error: displayError,
+        isDeferredLoading: false,
+      });
+      console.error('Deferred fetch error:', err);
+      throw err;
+    }
+  },
+
+  // Async: Cancel deferred action
+  cancelDeferred: async (deferredId, cancelledBy, reason) => {
+    set({ isActionLoading: true, error: null });
+
+    try {
+      const response = await cancelDeferredAction({
+        deferred_id: deferredId,
+        cancelled_by: cancelledBy,
+        reason,
+      });
+
+      if (response.success) {
+        // Rafraîchir et désélectionner
+        await get().fetchDeferredActions(false);
+        set({ selectedDeferred: null, isActionLoading: false });
+        return true;
+      } else {
+        set({
+          error: response.message || "Erreur lors de l'annulation",
+          isActionLoading: false,
+        });
+        return false;
+      }
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Erreur inconnue';
+      set({
+        error: `Erreur: ${errorMessage}`,
+        isActionLoading: false,
+      });
+      console.error('Cancel deferred error:', err);
       return false;
     }
   },
